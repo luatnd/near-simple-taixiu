@@ -24,6 +24,7 @@ const PAYOUT_PERCENT: u8 = 95; // pay out some % of deposit if user win
 const MIN_BET_AMOUNT: Balance = 200_000_000_000_000_000_000_000;
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[derive(PartialEq, Eq)]
 #[serde(crate = "near_sdk::serde")]
 pub enum Bet {
     Big,
@@ -31,7 +32,8 @@ pub enum Bet {
 }
 
 #[near_bindgen]
-#[derive(BorshSerialize, BorshDeserialize)]
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
 pub struct BetItem {
     u: AccountId,
     bet: Bet,
@@ -45,14 +47,16 @@ type BetResult = bool;
 #[derive(BorshDeserialize, BorshSerialize)]
 pub struct SimpleTaiXiu {
     pub bets: UnorderedMap<AccountId, BetItem>,
-    pub win_bets: UnorderedMap<AccountId, BetResult>,
+    pub result_bets: UnorderedMap<AccountId, BetResult>,
+    pub win_bet: Option<Bet>,
 }
 
 impl Default for SimpleTaiXiu {
     fn default() -> Self {
         Self {
             bets: UnorderedMap::new(b"b".to_vec()),
-            win_bets: UnorderedMap::new(b"w".to_vec()),
+            result_bets: UnorderedMap::new(b"w".to_vec()),
+            win_bet: None,
         }
     }
 }
@@ -89,16 +93,52 @@ impl SimpleTaiXiu {
 
     /// Reveal the result and calculate the bet result
     pub fn reveal_result(&mut self) {
+        let random_bool = env::block_timestamp() % 2 > 0;
+        let win_bet = match random_bool {
+            true => Bet::Big,
+            false => Bet::Small,
+        };
 
+        // TODO: Bench & Optimize this
+        for (k, v) in self.bets.to_vec() {
+            let win = v.bet == win_bet;
+            self.result_bets.insert(&k, &win);
+            if win {
+                // transfer money back to user
+                // TODO: How to handle large user quantity
+                let payout: Balance = v.amount + v.amount * PAYOUT_PERCENT as u128 / 100;
+                Promise::new(k).transfer(payout); // TODO: Await contract
+            }
+        }
     }
 
-    pub fn get_bet_results(self) -> Vec<HashMap<BetItem, BetResult>> {
-        assert!(false, "Must be contract owner to do this action");
-        vec![]
+    pub fn get_bet_results(self) -> Vec<(BetItem, Option<BetResult>)> {
+        let mut r: Vec<(BetItem, Option<BetResult>)> = vec![];
+        for (k, v) in self.bets.to_vec() {
+            let win = match self.win_bet.is_some() {
+                true => Some(self.result_bets.get(&k).unwrap()),
+                false => None,
+            };
+            r.push((v, win));
+        }
+
+        r
     }
 
-    pub fn get_my_bets(&self) -> Option<BetItem> {
-        self.bets.get(&env::signer_account_id())
+    pub fn get_my_bets(&self) -> Option<(BetItem, Option<BetResult>)> {
+        let k = env::signer_account_id();
+        let a = self.bets.get(&k);
+        if a.is_none() {
+            return None;
+        }
+
+        let v = a.unwrap();
+        let win = match self.win_bet.is_some() {
+            true => Some(self.result_bets.get(&k).unwrap()),
+            false => None,
+        };
+
+        Some((v, win))
     }
 }
 
