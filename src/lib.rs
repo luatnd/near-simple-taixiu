@@ -21,10 +21,10 @@ use near_sdk::{
 
 
 const PAYOUT_PERCENT: u8 = 95; // pay out some % of deposit if user win
-const MIN_BET_AMOUNT: Balance = 200_000_000_000_000_000_000_000;
+const MIN_BET_AMOUNT: Balance = 100_000_000_000_000_000_000_000; // 0.1 NEAR (1 Ⓝ = 1e24 yoctoⓃ)
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub enum Bet {
     Big,
@@ -66,11 +66,18 @@ impl SimpleTaiXiu {
 
     /// User can bet only once
     /// before we call open_result
+    ///
+    /// Usage by near-cli:
+    ///     near call --accountId $ID $N_CONTRACT bet '{"bet": "Big"}'  --deposit 0.1
+    ///     near call --accountId $ID $N_CONTRACT get_my_bets
+    ///     near view $N_CONTRACT get_bet_results
+    ///     near view-state $N_CONTRACT --finality final
+    ///
     #[payable]
     pub fn bet(&mut self, bet: Bet) {
         let amount = env::attached_deposit();
         assert!(
-            amount > MIN_BET_AMOUNT,
+            amount >= MIN_BET_AMOUNT,
             "Attached deposit must be greater than MIN_BET_AMOUNT",
         );
 
@@ -92,12 +99,20 @@ impl SimpleTaiXiu {
     }
 
     /// Reveal the result and calculate the bet result
+    ///
+    /// Must call this fn by contract owner:
+    ///     near call --accountId $N_CONTRACT $N_CONTRACT reveal_result
+    ///
+    #[private]
     pub fn reveal_result(&mut self) {
-        let random_bool = env::block_timestamp() % 2 > 0;
+        assert!(self.win_bet.is_none(), "Please start a new match");
+
+        let random_bool = (env::block_timestamp() / 100) as u64 % 2 > 0;
         let win_bet = match random_bool {
             true => Bet::Big,
             false => Bet::Small,
         };
+        self.win_bet = Some(win_bet.clone());
 
         // TODO: Bench & Optimize this
         for (k, v) in self.bets.to_vec() {
@@ -112,7 +127,19 @@ impl SimpleTaiXiu {
         }
     }
 
-    pub fn get_bet_results(self) -> Vec<(BetItem, Option<BetResult>)> {
+    /// Start a new match
+    ///
+    /// Must call this fn by contract owner:
+    ///     near call --accountId $N_CONTRACT $N_CONTRACT start_new_match
+    ///
+    #[private]
+    pub fn start_new_match(&mut self) {
+        self.bets = UnorderedMap::new(b"b".to_vec());
+        self.result_bets = UnorderedMap::new(b"w".to_vec());
+        self.win_bet = None;
+    }
+
+    pub fn get_bet_results(&self) -> Vec<(BetItem, Option<BetResult>)> {
         let mut r: Vec<(BetItem, Option<BetResult>)> = vec![];
         for (k, v) in self.bets.to_vec() {
             let win = match self.win_bet.is_some() {
@@ -237,4 +264,15 @@ mod tests {
         contract.bet(Bet::Big);
         contract.bet(Bet::Big);
     }
+
+    // #[test]
+    // #[should_panic]
+    // fn user_cannot_bet_smaller_min_vol() {
+    //     // Basic set up for a unit test
+    //     testing_env!(get_context().build());
+    //
+    //     let mut contract = SimpleTaiXiu::default();
+    //     // TODO: How to attach Deposit?
+    //     contract.bet(Bet::Big);
+    // }
 }
