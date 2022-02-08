@@ -1,7 +1,7 @@
 [package]
-name = "rust-template"
+name = "near-lode"
 version = "0.1.0"
-authors = ["Near Inc <hello@near.org>"]
+authors = ["Luatnd <neo.mxn0@gmail.com>"]
 edition = "2018"
 
 [lib]
@@ -9,6 +9,11 @@ crate-type = ["cdylib"]
 
 [dependencies]
 near-sdk = "4.0.0-pre.4"
+hex = "0.4.3"
+borsh = "*"
+#serde = { version = "*", features = ["derive"] }
+#serde_json = "*"
+
 
 [profile.release]
 codegen-units = 1

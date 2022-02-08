@@ -1,15 +1,105 @@
+use std::collections::HashMap;
+use std::hash::Hash;
+use std::vec::Vec;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::near_bindgen;
+use near_sdk::serde::{Serialize, Deserialize};
+use near_sdk::collections::UnorderedMap;
+use near_sdk::collections::Vector;
+use near_sdk::json_types::{U128};
+use near_sdk::{
+    env,
+    near_bindgen,
+    // ext_contract,
+    log,
+    AccountId,
+    Balance,
+    Promise,
+    // PromiseResult,
+    // PublicKey,
+    // PanicOnDefault,
+};
 
-#[near_bindgen]
-#[derive(Default, BorshDeserialize, BorshSerialize)]
-pub struct Contract {
-    // SETUP CONTRACT STATE
+
+const PAYOUT_PERCENT: u8 = 95; // pay out some % of deposit if user win
+const MIN_BET_AMOUNT: Balance = 200_000_000_000_000_000_000_000;
+
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub enum Bet {
+    Big,
+    Small,
 }
 
 #[near_bindgen]
-impl Contract {
-    // ADD CONTRACT METHODS HERE
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct BetItem {
+    u: AccountId,
+    bet: Bet,
+    amount: Balance,
+    created_at: u64, // unix timestamp
+}
+
+type BetResult = bool;
+
+#[near_bindgen]
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct SimpleTaiXiu {
+    pub bets: UnorderedMap<AccountId, BetItem>,
+    pub win_bets: UnorderedMap<AccountId, BetResult>,
+}
+
+impl Default for SimpleTaiXiu {
+    fn default() -> Self {
+        Self {
+            bets: UnorderedMap::new(b"b".to_vec()),
+            win_bets: UnorderedMap::new(b"w".to_vec()),
+        }
+    }
+}
+
+#[near_bindgen]
+impl SimpleTaiXiu {
+
+    /// User can bet only once
+    /// before we call open_result
+    #[payable]
+    pub fn bet(&mut self, bet: Bet) {
+        let amount = env::attached_deposit();
+        assert!(
+            amount > MIN_BET_AMOUNT,
+            "Attached deposit must be greater than MIN_BET_AMOUNT",
+        );
+
+        let account_id = env::signer_account_id();
+        match self.bets.get(&account_id) {
+            Some(value) => {
+                assert!(false, "Already bet, please wait after the result revealing")
+            },
+            None => {
+                let bet_item = BetItem {
+                    u: account_id.clone(),
+                    bet,
+                    amount,
+                    created_at: env::block_timestamp(),
+                };
+                self.bets.insert(&account_id, &bet_item);
+            }
+        }
+    }
+
+    /// Reveal the result and calculate the bet result
+    pub fn reveal_result(&mut self) {
+
+    }
+
+    pub fn get_bet_results(self) -> Vec<HashMap<BetItem, BetResult>> {
+        assert!(false, "Must be contract owner to do this action");
+        vec![]
+    }
+
+    pub fn get_my_bets(&self) -> Option<BetItem> {
+        self.bets.get(&env::signer_account_id())
+    }
 }
 
 /*
@@ -23,16 +113,88 @@ impl Contract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use near_sdk::test_utils::{get_logs, VMContextBuilder};
+    use near_sdk::test_utils::{
+        // get_logs,
+        VMContextBuilder,
+    };
     use near_sdk::{testing_env, AccountId};
 
     // part of writing unit tests is setting up a mock context
     // provide a `predecessor` here, it'll modify the default context
-    fn get_context(predecessor: AccountId) -> VMContextBuilder {
+    fn get_context() -> VMContextBuilder {
         let mut builder = VMContextBuilder::new();
-        builder.predecessor_account_id(predecessor);
+
+        /*
+        current_account_id: "contract_near".to_string(),
+        signer_account_id: "dev_near".to_string(),
+        signer_account_pk: vec![0, 1, 2],
+        predecessor_account_id: "other_contract_near".to_string(),
+        input,
+        block_index: 0,
+        block_timestamp: 0,
+        account_balance: 0,
+        account_locked_balance: 0,
+        storage_usage: 0,
+        attached_deposit: 1_000_000_000_000_000_000_000_000,
+        prepaid_gas: 10u64.pow(18),
+        random_seed: vec![0, 1, 2],
+        is_view,
+        output_data_receivers: vec![],
+        epoch_height: 19,
+         */
+        builder.current_account_id("contract_near".to_string().parse().unwrap());
+        builder.signer_account_id("dev.luatnd".to_string().parse().unwrap());
+        builder.is_view(false);
+        builder.attached_deposit(1_000_000_000_000_000_000_000_000);
+
         builder
     }
 
     // TESTS HERE
+    #[test]
+    fn debug_get_hash() {
+        // Basic set up for a unit test
+        testing_env!(VMContextBuilder::new().build());
+
+        // Using a unit test to rapidly debug and iterate
+        let debug_solution = "near nomicon ref finance";
+        let debug_hash_bytes = env::sha256(debug_solution.as_bytes());
+        let debug_hash_string = hex::encode(debug_hash_bytes);
+        println!("Let's debug: {:?}", debug_hash_string);
+    }
+
+    // #[test]
+    // fn user_can_bet() {
+    //     // Basic set up for a unit test
+    //     testing_env!(VMContextBuilder::new().build());
+    //
+    //     let mut contract = SimpleVnLottery::default();
+    //     let count: u8 = 16;
+    //     let bet_amount: u8 = 16 as u8 * count;  // compile error: ^^^^^^^^^^^^^^^^ attempt to compute `16_u8 * 16_u8`, which would overflow
+    //     println!("Let's debug: {:?}", bet_amount);
+    // }
+
+    #[test]
+    fn user_can_bet() {
+        // Basic set up for a unit test
+        testing_env!(get_context().build());
+
+        let mut contract = SimpleTaiXiu::default();
+        contract.bet(Bet::Big);
+        assert!(
+            contract.get_my_bets().is_some(),
+            "Cannot place bet"
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn user_cannot_bet_twice() {
+        // Basic set up for a unit test
+        testing_env!(get_context().build());
+
+        let mut contract = SimpleTaiXiu::default();
+        contract.bet(Bet::Big);
+        contract.bet(Bet::Big);
+    }
 }
